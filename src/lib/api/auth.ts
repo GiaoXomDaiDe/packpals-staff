@@ -1,122 +1,133 @@
-// API Configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
-
+// Auth API for PackPals Staff Dashboard
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL 
 export interface StaffLoginRequest {
-    username: string
-    password: string
+    username: string;
+    password: string;
+}
+
+export interface StaffUser {
+    id: string;
+    username: string;
+    fullName: string;
+    email: string;
+    role: string;
+    activeRole: string;
+    roles: string[];
+    status: string;
+    avatarUrl?: string;
 }
 
 export interface StaffLoginResponse {
-    success: boolean
+    success: boolean;
     data: {
-        user: {
-            id: string
-            username: string
-            fullName: string
-            email: string
-            role: string
-        }
-        token: string
-    }
-    message: string
-}
-
-export interface ApiError {
-    success: false
-    message: string
-    code?: string
+        user: StaffUser;
+        token: string;
+    };
+    message: string;
+    statusCode: number;
 }
 
 class AuthAPI {
-    private baseUrl = `${API_BASE_URL}/api/auth`
-
     async login(credentials: StaffLoginRequest): Promise<StaffLoginResponse> {
         try {
-            const response = await fetch(`${this.baseUrl}/login`, {
+            const response = await fetch(`${API_BASE_URL}/auth/login`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'ngrok-skip-browser-warning': 'true',
                 },
                 body: JSON.stringify({
-                    email: credentials.username, // Backend expects email field
+                    email: credentials.username,
                     password: credentials.password,
                 }),
-            })
+            });
 
-            if (!response.ok) {
-                // Try to parse error response
-                try {
-                    const errorData = await response.json()
-                    throw new Error(errorData.message || 'Đăng nhập thất bại')
-                } catch (parseError) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-                }
-            }
+            const data = await response.json();
 
-            const data = await response.json()
-            console.log('Login response:', JSON.stringify(data, null, 2))
-
-            // Backend trả về response với cấu trúc: { data: { tokenString, id, email, role, expiresInMilliseconds }, message, statusCode, code }
-            if (data && data.data && data.data.tokenString && data.data.id) {
-                const tokenData = data.data
+            if (response.ok && data.data) {
+                // Parse user data from backend response
+                const userData = data.data;
+                const userRoles = userData.roles || [userData.role];
                 
-                // Kiểm tra xem user có phải là STAFF hoặc ADMIN không (ADMIN cũng có thể truy cập Staff panel)
-                if (tokenData.role !== 'STAFF' && tokenData.role !== 'ADMIN') {
-                    throw new Error('Bạn không có quyền truy cập hệ thống Staff')
+                // Check if user has STAFF or ADMIN role
+                const hasStaffAccess = userRoles.includes('STAFF') || userRoles.includes('ADMIN');
+
+                if (!hasStaffAccess) {
+                    throw new Error('Bạn không có quyền truy cập hệ thống quản trị. Chỉ Staff và Admin mới được phép đăng nhập.');
                 }
 
                 return {
                     success: true,
                     data: {
                         user: {
-                            id: tokenData.id,
-                            username: credentials.username,
-                            fullName: tokenData.email || credentials.username, // Backend chưa có fullName
-                            email: tokenData.email || credentials.username,
-                            role: tokenData.role
+                            id: userData.id,
+                            username: userData.username || credentials.username,
+                            fullName: userData.fullName || userData.username || credentials.username,
+                            email: userData.email,
+                            role: userData.activeRole || userData.role || 'STAFF',
+                            activeRole: userData.activeRole || userData.role || 'STAFF',
+                            roles: userRoles,
+                            status: userData.status || 'ACTIVE',
+                            avatarUrl: userData.avatarUrl,
                         },
-                        token: tokenData.tokenString
+                        token: userData.token || userData.tokenString || ''
                     },
-                    message: data.message || 'Đăng nhập thành công'
-                }
+                    message: data.message || 'Đăng nhập thành công',
+                    statusCode: response.status
+                };
+            } else {
+                throw new Error(data.message || 'Tên đăng nhập hoặc mật khẩu không đúng');
             }
-
-            throw new Error('Invalid response format')
         } catch (error) {
-            if (error instanceof Error) {
-                throw error
-            }
-            throw new Error('Không thể kết nối đến server')
-        }
-    }
-
-    async logout(): Promise<{ success: boolean }> {
-        try {
-            // Clear local storage or perform logout API call if needed
-            localStorage.removeItem('staff_token')
-            localStorage.removeItem('staff_user')
+            console.error('Login API Error:', error);
             
-            return { success: true }
-        } catch (error) {
-            throw new Error('Đăng xuất thất bại')
+            // Throw original error or generic message
+            throw new Error(error instanceof Error ? error.message : 'Không thể kết nối đến máy chủ. Vui lòng thử lại sau.');
         }
     }
 
-    async verifyToken(token: string): Promise<boolean> {
+    async logout(): Promise<void> {
         try {
-            const response = await fetch(`${this.baseUrl}/verify`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
-            })
-
-            return response.ok
+            // Clear localStorage
+            localStorage.removeItem('staff_token');
+            localStorage.removeItem('staff_user');
+            
+            // Optional: Call backend logout endpoint if available
+            // const token = localStorage.getItem('staff_token');
+            // if (token) {
+            //     await fetch(`${API_BASE_URL}/auth/logout`, {
+            //         method: 'POST',
+            //         headers: {
+            //             'Authorization': `Bearer ${token}`,
+            //         },
+            //     });
+            // }
         } catch (error) {
-            return false
+            console.error('Logout error:', error);
+            // Still clear local storage even if API call fails
+            localStorage.removeItem('staff_token');
+            localStorage.removeItem('staff_user');
+        }
+    }
+
+    async validateToken(token: string): Promise<boolean> {
+        try {
+            const response = await fetch(`${API_BASE_URL}/auth/validate`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true',
+                },
+            });
+
+            return response.ok;
+        } catch (error) {
+            console.error('Token validation error:', error);
+            return false;
         }
     }
 }
 
-export const authAPI = new AuthAPI()
+export const authAPI = new AuthAPI();

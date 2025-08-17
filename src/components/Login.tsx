@@ -80,11 +80,11 @@ export function Login({ onLogin, isLoading: externalLoading }: LoginProps) {
 
       <div className="relative z-10 w-full max-w-md">
         {/* Glass card effect */}
-        <div className="backdrop-blur-lg bg-white/80 rounded-3xl shadow-2xl border border-white/20 p-8 md:p-10">
+        <div className="backdrop-blur-lg bg-white/80 rounded-3xl  border border-white/20 p-8 md:p-10">
           {/* Logo and header */}
           <div className="text-center mb-8">
             <div className="relative inline-block mb-6">
-              <div className="mx-auto h-20 w-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-3xl flex items-center justify-center shadow-lg transform hover:scale-105 transition-transform duration-300">
+              <div className="mx-auto h-20 w-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-3xl flex items-center justify-center  transform hover:scale-105 transition-transform duration-300">
                 <Package className="h-10 w-10 text-white" />
               </div>
               <Sparkles className="absolute -top-2 -right-2 h-6 w-6 text-yellow-400 animate-pulse" />
@@ -111,6 +111,7 @@ export function Login({ onLogin, isLoading: externalLoading }: LoginProps) {
                 <input
                   id="username"
                   type="text"
+                  autoComplete="username"
                   {...register('username')}
                   onFocus={() => setFocusedField('username')}
                   onBlur={() => setFocusedField(null)}
@@ -136,6 +137,7 @@ export function Login({ onLogin, isLoading: externalLoading }: LoginProps) {
                 <input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
                   {...register('password')}
                   onFocus={() => setFocusedField('password')}
                   onBlur={() => setFocusedField(null)}
@@ -180,7 +182,7 @@ export function Login({ onLogin, isLoading: externalLoading }: LoginProps) {
             <button
               type="submit"
               disabled={isLoading}
-              className="relative w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-4 px-6 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-lg hover:shadow-xl flex items-center justify-center group"
+              className="relative w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-4 px-6 rounded-2xl transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100  hover:shadow-xl flex items-center justify-center group"
             >
               <span className="absolute inset-0 bg-white/20 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"></span>
               {isLoading ? (

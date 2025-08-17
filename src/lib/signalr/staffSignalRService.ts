@@ -1,261 +1,339 @@
 import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 
-export interface StaffNotification {
-  type: string;
-  message: string;
-  data?: any;
-  timestamp: string;
-}
-
-export interface KeeperRegistrationNotification {
-  userId: string;
-  userName: string;
-  requestId: string;
-  email?: string;
-  identityNumber?: string;
-  bankAccount?: string;
-}
-
-export type StaffNotificationHandler = (notification: StaffNotification) => void;
-export type KeeperRegistrationHandler = (notification: KeeperRegistrationNotification) => void;
-
+// SignalR Service for Staff Web Interface
 class StaffSignalRService {
   private connection: HubConnection | null = null;
-  private staffId: string | null = null;
+  private isConnected = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
+  private reconnectDelay = 5000; // 5 seconds
 
-  // Event handlers
-  private onKeeperRegistrationHandlers: KeeperRegistrationHandler[] = [];
-  private onGeneralNotificationHandlers: StaffNotificationHandler[] = [];
+  constructor() {
+    this.initializeConnection();
+  }
 
-  /**
-   * Initialize SignalR connection for staff
-   * @param baseUrl - Backend server URL
-   * @param staffId - Staff member ID
-   */
-  async initialize(baseUrl: string = 'http://localhost:5000', staffId: string): Promise<boolean> {
-    try {
-      // Check if already connected with same staff ID
-      if (this.connection?.state === 'Connected' && this.staffId === staffId) {
-        console.log('Staff SignalR already connected');
-        return true;
-      }
+  private initializeConnection() {
+    // Use environment variable with fallback to production URL
+    const signalRUrl = import.meta.env.VITE_SIGNALR_URL || 'https://packpal-api.up.railway.app/signalrhub';
+    
+    console.log('🔗 [Staff SignalR] Initializing connection to:', signalRUrl);
 
-      // Disconnect existing connection if different staff ID
-      if (this.connection && this.staffId !== staffId) {
-        await this.disconnect();
-      }
-
-      console.log('Initializing Staff SignalR connection to:', baseUrl);
-      
-      this.staffId = staffId;
-
-      // Check if backend is available before attempting connection
-      try {
-        const response = await fetch(`${baseUrl}/api/health`, { 
-          method: 'GET',
-          signal: AbortSignal.timeout(5000) // 5 second timeout
-        });
-        if (!response.ok) {
-          throw new Error(`Backend not available: ${response.status}`);
+    this.connection = new HubConnectionBuilder()
+      .withUrl(signalRUrl, {
+        accessTokenFactory: () => {
+          // Get staff token from localStorage
+          const token = localStorage.getItem('staff_token') || '';
+          console.log('🔐 [Staff SignalR] Using token:', token ? 'Token present' : 'No token');
+          return token;
         }
-      } catch (healthError) {
-        console.warn('❌ Backend health check failed:', healthError);
-        console.log('📱 SignalR will work in offline mode');
-        return false;
-      }
+      })
+      .withAutomaticReconnect({
+        nextRetryDelayInMilliseconds: (retryContext) => {
+          // Progressive backoff: 2s, 5s, 10s, 20s, 30s
+          const delays = [2000, 5000, 10000, 20000, 30000];
+          const delayIndex = Math.min(retryContext.previousRetryCount, delays.length - 1);
+          const delay = delays[delayIndex];
+          console.log(`🔄 [Staff SignalR] Next reconnect attempt ${retryContext.previousRetryCount + 1} in ${delay}ms`);
+          return delay;
+        }
+      })
+      .configureLogging(LogLevel.Information)
+      .build();
 
-      this.connection = new HubConnectionBuilder()
-        .withUrl(`${baseUrl}/hubs/staff-notifications`, {
-          skipNegotiation: false,
-          headers: {
-            'Access-Control-Allow-Origin': '*',
-          },
-        })
-        .withAutomaticReconnect({
-          nextRetryDelayInMilliseconds: (retryContext: any) => {
-            if (retryContext.previousRetryCount < this.maxReconnectAttempts) {
-              return Math.min(1000 * Math.pow(2, retryContext.previousRetryCount), 30000);
-            }
-            return null;
+    this.setupConnectionEvents();
+    this.setupNotificationHandlers();
+  }
+
+  private setupConnectionEvents() {
+    if (!this.connection) return;
+
+    // Connection established
+    this.connection.onreconnecting((error) => {
+      console.log('🔄 [Staff SignalR] Reconnecting...', error);
+      this.isConnected = false;
+    });
+
+    this.connection.onreconnected((connectionId) => {
+      console.log('✅ [Staff SignalR] Reconnected successfully:', connectionId);
+      this.isConnected = true;
+      this.reconnectAttempts = 0;
+      this.joinStaffGroup();
+    });
+
+    this.connection.onclose(async (error) => {
+      console.log('❌ [Staff SignalR] Connection closed:', error);
+      this.isConnected = false;
+      
+      // Attempt manual reconnection if automatic reconnect fails
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        console.log(`🔄 [Staff SignalR] Manual reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+        
+        setTimeout(() => {
+          this.start();
+        }, this.reconnectDelay);
+      }
+    });
+  }
+
+  private setupNotificationHandlers() {
+    if (!this.connection) return;
+
+    // Keeper registration request notification
+    this.connection.on('KeeperRegistrationRequest', (notification) => {
+      console.log('📩 [Staff SignalR] Keeper registration request received:', notification);
+      this.handleKeeperRegistrationRequest(notification);
+    });
+
+    // Storage creation request notification
+    this.connection.on('CreateStorageRequest', (notification) => {
+      console.log('🏠 [Staff SignalR] Create storage request received:', notification);
+      this.handleCreateStorageRequest(notification);
+    });
+
+    // Storage deletion request notification
+    this.connection.on('DeleteStorageRequest', (notification) => {
+      console.log('🗑️ [Staff SignalR] Delete storage request received:', notification);
+      this.handleDeleteStorageRequest(notification);
+    });
+
+    // Payout request notification  
+    this.connection.on('ReceivePayoutRequest', (notification) => {
+      console.log('💰 [Staff SignalR] Payout request received:', notification);
+      this.handlePayoutRequest(notification);
+    });
+
+    // Generic staff notification
+    this.connection.on('StaffNotification', (notification) => {
+      console.log('📢 [Staff SignalR] Staff notification received:', notification);
+      this.handleGenericNotification(notification);
+    });
+  }
+
+  private handleKeeperRegistrationRequest(notification: any) {
+    console.log('📩 [Staff SignalR] Keeper registration request received:', notification);
+    
+    // Extract username safely
+    const username = notification.data?.Username || notification.Data?.Username || 'Unknown User';
+    
+    // Show browser notification if permission granted
+    this.showBrowserNotification(
+      'New Keeper Registration',
+      `${username} wants to become a keeper`,
+      '/staff/upgrade-request'
+    );
+
+    // Dispatch custom event for React components to listen
+    window.dispatchEvent(new CustomEvent('staffNotification', {
+      detail: {
+        type: 'KEEPER_REGISTRATION_REQUEST',
+        notification: notification
+      }
+    }));
+
+    // Update badge count
+    this.updateNotificationBadge();
+  }
+
+  private handleCreateStorageRequest(notification: any) {
+    console.log('🏠 [Staff SignalR] Create storage request received:', notification);
+    
+    // Extract username safely
+    const username = notification.data?.Username || notification.Data?.Username || 'Unknown User';
+    
+    // Show browser notification if permission granted
+    this.showBrowserNotification(
+      'New Storage Creation Request',
+      `${username} wants to create a new storage`,
+      '/staff/storage-request'
+    );
+
+    // Dispatch custom event for React components to listen
+    window.dispatchEvent(new CustomEvent('staffNotification', {
+      detail: {
+        type: 'CREATE_STORAGE_REQUEST',
+        notification: notification
+      }
+    }));
+
+    // Update badge count
+    this.updateNotificationBadge();
+  }
+
+  private handleDeleteStorageRequest(notification: any) {
+    console.log('🗑️ [Staff SignalR] Delete storage request received:', notification);
+    
+    // Extract username safely
+    const username = notification.data?.Username || notification.Data?.Username || 'Unknown User';
+    
+    // Show browser notification if permission granted
+    this.showBrowserNotification(
+      'New Storage Deletion Request',
+      `${username} wants to delete a storage`,
+      '/staff/storage-request'
+    );
+
+    // Dispatch custom event for React components to listen
+    window.dispatchEvent(new CustomEvent('staffNotification', {
+      detail: {
+        type: 'DELETE_STORAGE_REQUEST',
+        notification: notification
+      }
+    }));
+
+    // Update badge count
+    this.updateNotificationBadge();
+  }
+
+  private handlePayoutRequest(notification: any) {
+    this.showBrowserNotification(
+      'New Payout Request',
+      `Payout request of $${notification.Amount}`,
+      '/staff/payout-request'
+    );
+
+    window.dispatchEvent(new CustomEvent('staffNotification', {
+      detail: {
+        type: 'PAYOUT_REQUEST',
+        notification: notification
+      }
+    }));
+
+    this.updateNotificationBadge();
+  }
+
+  private handleGenericNotification(notification: any) {
+    console.log('📢 [Staff SignalR] Generic notification:', notification);
+    
+    window.dispatchEvent(new CustomEvent('staffNotification', {
+      detail: {
+        type: 'GENERIC',
+        notification: notification
+      }
+    }));
+  }
+
+  private showBrowserNotification(title: string, body: string, clickUrl?: string) {
+    // Check if browser supports notifications
+    if ('Notification' in window) {
+      // Request permission if not granted
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().then(permission => {
+          if (permission === 'granted') {
+            this.createNotification(title, body, clickUrl);
           }
-        })
-        .configureLogging(LogLevel.Information)
-        .build();
-
-      // Setup event handlers
-      this.setupEventHandlers();
-
-      // Setup connection lifecycle handlers
-      this.setupConnectionHandlers();
-
-      // Start connection
-      await this.connection.start();
-      console.log('✅ Staff SignalR connected successfully');
-      
-      // Join staff group
-      await this.joinStaffGroup(staffId);
-      
-      this.reconnectAttempts = 0;
-      return true;
-    } catch (error) {
-      console.error('❌ Staff SignalR connection failed:', error);
-      // Clean up on failure
-      this.connection = null;
-      this.staffId = null;
-      return false;
+        });
+      } else if (Notification.permission === 'granted') {
+        this.createNotification(title, body, clickUrl);
+      }
     }
   }
 
-  /**
-   * Join staff group to receive notifications
-   */
-  private async joinStaffGroup(staffId: string): Promise<boolean> {
-    try {
-      if (!this.connection || this.connection.state !== 'Connected') {
-        console.error('Staff SignalR not connected');
-        return false;
+  private createNotification(title: string, body: string, clickUrl?: string) {
+    const notification = new Notification(title, {
+      body: body,
+      icon: '/vite.svg', // Replace with actual app icon
+      badge: '/vite.svg',
+      tag: 'staff-notification',
+      requireInteraction: true,
+    });
+
+    notification.onclick = function() {
+      window.focus();
+      if (clickUrl) {
+        window.location.href = clickUrl;
       }
-
-      await this.connection.invoke('JoinStaffGroup', staffId);
-      console.log(`✅ Joined staff group: Staff_${staffId}`);
-      
-      return true;
-    } catch (error) {
-      console.error('❌ Failed to join staff group:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Leave staff group
-   */
-  private async leaveStaffGroup(): Promise<boolean> {
-    try {
-      if (!this.connection || !this.staffId || this.connection.state !== 'Connected') {
-        return true; // Already disconnected or not in group
-      }
-
-      await this.connection.invoke('LeaveStaffGroup', this.staffId);
-      console.log(`✅ Left staff group: Staff_${this.staffId}`);
-      
-      return true;
-    } catch (error) {
-      console.error('❌ Failed to leave staff group:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Disconnect from SignalR hub
-   */
-  async disconnect(): Promise<void> {
-    try {
-      if (this.connection && this.connection.state === 'Connected') {
-        await this.leaveStaffGroup();
-        await this.connection.stop();
-        console.log('✅ Staff SignalR disconnected');
-      } else if (this.connection) {
-        // Force stop if connection exists but not connected
-        await this.connection.stop();
-        console.log('✅ Staff SignalR force disconnected');
-      }
-    } catch (error) {
-      console.error('❌ Staff SignalR disconnect error:', error);
-    } finally {
-      this.connection = null;
-      this.staffId = null;
-      this.reconnectAttempts = 0;
-    }
-  }
-
-  /**
-   * Get connection state
-   */
-  get isConnected(): boolean {
-    return this.connection?.state === 'Connected';
-  }
-
-  // Event handler registration methods
-  onKeeperRegistration(handler: KeeperRegistrationHandler): () => void {
-    this.onKeeperRegistrationHandlers.push(handler);
-    return () => {
-      const index = this.onKeeperRegistrationHandlers.indexOf(handler);
-      if (index > -1) {
-        this.onKeeperRegistrationHandlers.splice(index, 1);
-      }
+      notification.close();
     };
+
+    // Auto close after 10 seconds
+    setTimeout(() => {
+      notification.close();
+    }, 10000);
   }
 
-  onGeneralNotification(handler: StaffNotificationHandler): () => void {
-    this.onGeneralNotificationHandlers.push(handler);
-    return () => {
-      const index = this.onGeneralNotificationHandlers.indexOf(handler);
-      if (index > -1) {
-        this.onGeneralNotificationHandlers.splice(index, 1);
+  private updateNotificationBadge() {
+    // Update document title with notification indicator
+    const currentTitle = document.title;
+    if (!currentTitle.includes('(!)')) {
+      document.title = `(!) ${currentTitle}`;
+    }
+
+    // Dispatch event for UI components to update badge
+    window.dispatchEvent(new CustomEvent('updateNotificationBadge'));
+  }
+
+  private async joinStaffGroup() {
+    if (!this.connection || !this.isConnected) return;
+
+    try {
+      // Join the Staff group to receive staff notifications
+      await this.connection.invoke('JoinStaffGroup');
+      console.log('✅ [Staff SignalR] Joined Staff group successfully');
+    } catch (error) {
+      console.error('❌ [Staff SignalR] Failed to join Staff group:', error);
+    }
+  }
+
+  // Public methods
+  public async start(): Promise<void> {
+    if (!this.connection) {
+      this.initializeConnection();
+    }
+
+    try {
+      if (this.connection!.state === 'Disconnected') {
+        await this.connection!.start();
+        console.log('✅ [Staff SignalR] Connected successfully');
+        this.isConnected = true;
+        this.reconnectAttempts = 0;
+
+        // Join staff group after connection
+        await this.joinStaffGroup();
       }
-    };
+    } catch (error) {
+      console.error('❌ [Staff SignalR] Connection failed:', error);
+      this.isConnected = false;
+      throw error;
+    }
   }
 
-  private setupEventHandlers(): void {
-    if (!this.connection) return;
-
-    // Handle new keeper registration requests
-    this.connection.on('NewKeeperRequest', (notification: any) => {
-      console.log('🆕 New keeper registration request:', notification);
-      
-      const data: KeeperRegistrationNotification = {
-        userId: notification.UserId,
-        userName: notification.UserName,
-        requestId: notification.RequestId,
-        email: notification.Email,
-        identityNumber: notification.IdentityNumber,
-        bankAccount: notification.BankAccount
-      };
-      
-      this.onKeeperRegistrationHandlers.forEach(handler => handler(data));
-    });
-
-    // Handle general staff notifications
-    this.connection.on('StaffNotification', (notification: any) => {
-      console.log('📢 General staff notification:', notification);
-      
-      const data: StaffNotification = {
-        type: notification.Type || 'GENERAL',
-        message: notification.Message,
-        data: notification.Data,
-        timestamp: notification.Timestamp || new Date().toISOString()
-      };
-      
-      this.onGeneralNotificationHandlers.forEach(handler => handler(data));
-    });
-  }
-
-  private setupConnectionHandlers(): void {
-    if (!this.connection) return;
-
-    this.connection.onclose((error: any) => {
-      console.log('🔌 Staff SignalR connection closed:', error?.message || 'No error');
-    });
-
-    this.connection.onreconnecting((error: any) => {
-      console.log('🔄 Staff SignalR reconnecting:', error?.message || 'No error');
-      this.reconnectAttempts++;
-    });
-
-    this.connection.onreconnected((connectionId: any) => {
-      console.log('✅ Staff SignalR reconnected:', connectionId);
-      this.reconnectAttempts = 0;
-      
-      // Rejoin staff group if we were connected
-      if (this.staffId) {
-        this.joinStaffGroup(this.staffId);
+  public async stop(): Promise<void> {
+    if (this.connection) {
+      try {
+        await this.connection.stop();
+        console.log('🛑 [Staff SignalR] Connection stopped');
+        this.isConnected = false;
+      } catch (error) {
+        console.error('❌ [Staff SignalR] Error stopping connection:', error);
       }
-    });
+    }
+  }
+
+  public getConnectionState(): string {
+    return this.connection?.state || 'Disconnected';
+  }
+
+  public isConnectionActive(): boolean {
+    return this.isConnected && this.connection?.state === 'Connected';
+  }
+
+  // Send test notification (for debugging)
+  public async sendTestNotification(): Promise<void> {
+    if (!this.connection || !this.isConnected) {
+      throw new Error('SignalR connection not established');
+    }
+
+    try {
+      await this.connection.invoke('SendTestNotification', 'Test message from staff');
+      console.log('✅ [Staff SignalR] Test notification sent');
+    } catch (error) {
+      console.error('❌ [Staff SignalR] Failed to send test notification:', error);
+      throw error;
+    }
   }
 }
 
-// Export singleton instance
+// Create singleton instance
 export const staffSignalRService = new StaffSignalRService();
 export default staffSignalRService;

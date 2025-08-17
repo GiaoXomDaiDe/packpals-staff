@@ -1,162 +1,231 @@
 import { useCallback, useEffect, useState } from 'react';
-import type {
-  KeeperRegistrationHandler,
-  KeeperRegistrationNotification,
-  StaffNotification,
-  StaffNotificationHandler
-} from '../lib/signalr/staffSignalRService';
-import staffSignalRService from '../lib/signalr/staffSignalRService';
+import { useNotification } from '../context/NotificationProvider';
+import { staffSignalRService } from '../lib/signalr/staffSignalRService';
 
-export interface UseStaffSignalROptions {
-  autoConnect?: boolean;
-  staffId?: string;
-  baseUrl?: string;
+// Types for notifications
+export interface StaffNotification {
+  type: string;
+  message: string;
+  data: any;
+  timestamp: string;
 }
 
-export interface UseStaffSignalRReturn {
-  isConnected: boolean;
-  isConnecting: boolean;
-  error: string | null;
-  connect: (staffId: string, baseUrl?: string) => Promise<boolean>;
-  disconnect: () => Promise<void>;
-  keeperRegistrations: KeeperRegistrationNotification[];
-  generalNotifications: StaffNotification[];
-  clearKeeperRegistrations: () => void;
-  clearGeneralNotifications: () => void;
-  markAsRead: (type: 'keeper' | 'general', index: number) => void;
+export interface KeeperRegistrationNotification {
+  Type: 'KEEPER_REGISTRATION_REQUEST';
+  Message: string;
+  Data: {
+    UserId: string;
+    Username: string;
+    RequestId: string;
+    RequestType: 'KEEPER_REGISTRATION';
+    Timestamp: string;
+  };
+  Timestamp: string;
 }
 
-export const useStaffSignalR = (options: UseStaffSignalROptions = {}): UseStaffSignalRReturn => {
-  const { autoConnect = false, staffId, baseUrl = 'http://localhost:5000' } = options;
+export interface PayoutNotification {
+  Id: string;
+  Amount: number;
+  UserId: string;
+  CreatedAt: string;
+}
 
-  // Connection state
-  const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [isConnecting, setIsConnecting] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+// Hook for managing Staff SignalR connection and notifications
+export const useStaffSignalR = () => {
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectionState, setConnectionState] = useState('Disconnected');
+  const [notifications, setNotifications] = useState<StaffNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [lastNotification, setLastNotification] = useState<StaffNotification | null>(null);
+  const { showNotification } = useNotification();
 
-  // Notifications state
-  const [keeperRegistrations, setKeeperRegistrations] = useState<KeeperRegistrationNotification[]>([]);
-  const [generalNotifications, setGeneralNotifications] = useState<StaffNotification[]>([]);
-
-  // Connection handlers
-  const connect = useCallback(async (staffId: string, baseUrl?: string): Promise<boolean> => {
-    if (isConnecting) {
-      console.log('Connection already in progress');
-      return false;
-    }
-
-    setIsConnecting(true);
-    setError(null);
-
+  // Connection management
+  const connect = useCallback(async () => {
     try {
-      const success = await staffSignalRService.initialize(baseUrl, staffId);
-      setIsConnected(success);
-      
-      if (!success) {
-        setError('Backend server is not available. Working in offline mode.');
-      } else {
-        setError(null);
-      }
-      
-      return success;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown connection error';
-      setError(errorMessage);
+      console.log('🔄 [useStaffSignalR] Attempting to connect...');
+      await staffSignalRService.start();
+      setIsConnected(true);
+      setConnectionState('Connected');
+      console.log('✅ [useStaffSignalR] Connected successfully');
+    } catch (error) {
+      console.error('❌ [useStaffSignalR] Connection failed:', error);
       setIsConnected(false);
-      return false;
-    } finally {
-      setIsConnecting(false);
+      setConnectionState('Disconnected');
     }
-  }, [isConnecting]);
+  }, []);
 
-  const disconnect = useCallback(async (): Promise<void> => {
+  const disconnect = useCallback(async () => {
     try {
-      await staffSignalRService.disconnect();
+      await staffSignalRService.stop();
       setIsConnected(false);
-      setError(null);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown disconnection error';
-      setError(errorMessage);
+      setConnectionState('Disconnected');
+      console.log('🛑 [useStaffSignalR] Disconnected');
+    } catch (error) {
+      console.error('❌ [useStaffSignalR] Disconnect error:', error);
     }
   }, []);
 
   // Notification handlers
-  const handleKeeperRegistration: KeeperRegistrationHandler = useCallback((notification: KeeperRegistrationNotification) => {
-    setKeeperRegistrations(prev => [notification, ...prev]);
-  }, []);
-
-  const handleGeneralNotification: StaffNotificationHandler = useCallback((notification: StaffNotification) => {
-    setGeneralNotifications(prev => [notification, ...prev]);
-  }, []);
-
-  // Clear notifications
-  const clearKeeperRegistrations = useCallback(() => {
-    setKeeperRegistrations([]);
-  }, []);
-
-  const clearGeneralNotifications = useCallback(() => {
-    setGeneralNotifications([]);
-  }, []);
-
-  const markAsRead = useCallback((type: 'keeper' | 'general', index: number) => {
-    if (type === 'keeper') {
-      setKeeperRegistrations(prev => prev.filter((_, i) => i !== index));
-    } else {
-      setGeneralNotifications(prev => prev.filter((_, i) => i !== index));
-    }
-  }, []);
-
-  // Effect to register/unregister notification handlers
-  useEffect(() => {
-    const unsubscribeKeeper = staffSignalRService.onKeeperRegistration(handleKeeperRegistration);
-    const unsubscribeGeneral = staffSignalRService.onGeneralNotification(handleGeneralNotification);
-
-    return () => {
-      unsubscribeKeeper();
-      unsubscribeGeneral();
+  const handleStaffNotification = useCallback((event: CustomEvent) => {
+    const { type, notification } = event.detail;
+    
+    console.log(`📩 [useStaffSignalR] Received ${type} notification:`, notification);
+    
+    const newNotification: StaffNotification = {
+      type: type,
+      message: notification.Message || notification.message || 'New notification',
+      data: notification.Data || notification.data || notification,
+      timestamp: notification.Timestamp || notification.timestamp || new Date().toISOString()
     };
-  }, [handleKeeperRegistration, handleGeneralNotification]);
 
-  // Auto-connect effect
-  useEffect(() => {
-    if (autoConnect && staffId && !isConnected && !isConnecting) {
-      connect(staffId, baseUrl);
+    setNotifications(prev => [newNotification, ...prev].slice(0, 50)); // Keep last 50 notifications
+    setUnreadCount(prev => prev + 1);
+    setLastNotification(newNotification);
+    
+    // Show toast notification
+    let toastTitle = '📢 New Notification';
+    if (type === 'KEEPER_REGISTRATION_REQUEST') {
+      toastTitle = '🆕 New Keeper Registration';
+    } else if (type === 'CREATE_STORAGE_REQUEST') {
+      toastTitle = '� New Storage Creation';
+    } else if (type === 'DELETE_STORAGE_REQUEST') {
+      toastTitle = '🗑️ New Storage Deletion';
+    } else if (type === 'PAYOUT_REQUEST') {
+      toastTitle = '� New Payout Request';
     }
-  }, [autoConnect, staffId, baseUrl, isConnected, isConnecting, connect]);
+    
+    showNotification({
+      title: toastTitle,
+      message: newNotification.message,
+      type: 'info',
+      duration: 6000
+    });
+  }, [showNotification]);
 
-  // Update connection state based on service state
+  const handleNotificationBadgeUpdate = useCallback(() => {
+    // This could trigger UI updates, sounds, etc.
+    console.log('🔔 [useStaffSignalR] Notification badge update requested');
+  }, []);
+
+  // Mark notifications as read
+  const markAsRead = useCallback(() => {
+    setUnreadCount(0);
+    
+    // Clear title notification indicator
+    const currentTitle = document.title;
+    if (currentTitle.includes('(!)')) {
+      document.title = currentTitle.replace('(!) ', '');
+    }
+  }, []);
+
+  // Clear all notifications
+  const clearNotifications = useCallback(() => {
+    setNotifications([]);
+    setUnreadCount(0);
+    setLastNotification(null);
+  }, []);
+
+  // Get specific notification types
+  const getKeeperRegistrationNotifications = useCallback(() => {
+    return notifications.filter(n => n.type === 'KEEPER_REGISTRATION_REQUEST');
+  }, [notifications]);
+
+  const getPayoutNotifications = useCallback(() => {
+    return notifications.filter(n => n.type === 'PAYOUT_REQUEST');
+  }, [notifications]);
+
+  // Send test notification
+  const sendTestNotification = useCallback(async () => {
+    try {
+      await staffSignalRService.sendTestNotification();
+      console.log('✅ [useStaffSignalR] Test notification sent');
+    } catch (error) {
+      console.error('❌ [useStaffSignalR] Test notification failed:', error);
+      throw error;
+    }
+  }, []);
+
+  // Setup event listeners and connection
   useEffect(() => {
-    const checkConnection = () => {
-      const serviceConnected = staffSignalRService.isConnected;
-      if (serviceConnected !== isConnected) {
-        setIsConnected(serviceConnected);
+    // Add event listeners for SignalR notifications
+    window.addEventListener('staffNotification', handleStaffNotification as EventListener);
+    window.addEventListener('updateNotificationBadge', handleNotificationBadgeUpdate as EventListener);
+
+    // Cleanup event listeners
+    return () => {
+      window.removeEventListener('staffNotification', handleStaffNotification as EventListener);
+      window.removeEventListener('updateNotificationBadge', handleNotificationBadgeUpdate as EventListener);
+    };
+  }, [handleStaffNotification, handleNotificationBadgeUpdate]);
+
+  // Auto-connect when hook is first used
+  useEffect(() => {
+    const autoConnect = async () => {
+      // Only connect if user is authenticated
+      const token = localStorage.getItem('staff_token');
+      if (token && !isConnected) {
+        await connect();
       }
     };
 
-    const interval = setInterval(checkConnection, 2000);
-    return () => clearInterval(interval);
-  }, [isConnected]);
+    autoConnect();
 
-  // Cleanup on unmount
-  useEffect(() => {
+    // Cleanup on unmount
     return () => {
       if (isConnected) {
         disconnect();
       }
     };
-  }, [isConnected, disconnect]);
+  }, []); // Only run once on mount
+
+  // Update connection state periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentState = staffSignalRService.getConnectionState();
+      const isActive = staffSignalRService.isConnectionActive();
+      
+      setConnectionState(currentState);
+      setIsConnected(isActive);
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Request notification permission on first load
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        console.log(`🔔 [useStaffSignalR] Notification permission: ${permission}`);
+      });
+    }
+  }, []);
 
   return {
+    // Connection state
     isConnected,
-    isConnecting,
-    error,
+    connectionState,
+    
+    // Connection management
     connect,
     disconnect,
-    keeperRegistrations,
-    generalNotifications,
-    clearKeeperRegistrations,
-    clearGeneralNotifications,
+    
+    // Notifications
+    notifications,
+    unreadCount,
+    lastNotification,
+    
+    // Notification management
     markAsRead,
+    clearNotifications,
+    getKeeperRegistrationNotifications,
+    getPayoutNotifications,
+    
+    // Utilities
+    sendTestNotification,
+    
+    // Computed values
+    hasUnreadNotifications: unreadCount > 0,
+    totalNotifications: notifications.length,
   };
 };
 

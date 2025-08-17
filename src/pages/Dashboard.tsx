@@ -1,50 +1,46 @@
 import {
-  Activity,
-  BarChart3,
   Bell,
   ChevronRight,
   DollarSign,
   Eye,
-  FileText,
   Filter,
-  Home,
   LogOut,
   Menu,
   Package,
   Search,
-  TrendingUp,
   UserCheck,
   Users,
   UserX,
   X
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import NotificationDropdown from '../components/NotificationDropdown';
+import { useEffect, useRef, useState } from 'react';
+import PayoutManagement from '../components/PayoutManagement';
 import RequestManagement from '../components/RequestManagement';
 import UserDetails from '../components/UserDetails';
-import useStaffSignalR from '../hooks/useStaffSignalR';
-import { userAPI, UserRole, UserStatus, type GetUsersParams, type User } from '../lib/api/user';
+import { useStaffSignalR } from '../hooks/useStaffSignalR';
+import { RequestStatus, RequestType } from '../lib/api/request';
+import { userAPI, UserRole, UserStatus, type GetUsersParams, type User, type UserDetail } from '../lib/api/user';
 
-export default function Dashboard() {
-  const [currentPage, setCurrentPage] = useState('dashboard');
+interface DashboardProps {
+  user: any;
+  onLogout: () => void;
+}
+
+export default function Dashboard({ user, onLogout }: DashboardProps) {
+  const [currentPage, setCurrentPage] = useState('list-user');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<UserDetail | null>(null);
+  const [notificationDropdownOpen, setNotificationDropdownOpen] = useState(false);
+  const notificationDropdownRef = useRef<HTMLDivElement>(null);
   
-  // SignalR hook for real-time notifications
+  // SignalR for real-time notifications
   const {
-    isConnected,
-    isConnecting,
-    error,
-    connect,
-    disconnect,
-    keeperRegistrations,
-    generalNotifications,
-    clearKeeperRegistrations,
-    clearGeneralNotifications,
-    markAsRead
+    notifications,
+    unreadCount,
+    markAsRead,
+    clearNotifications,
   } = useStaffSignalR();
-
+  
   // User management states
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,87 +59,105 @@ export default function Dashboard() {
     pageSize: 10
   });
   const [searchTerm, setSearchTerm] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'offline' | 'unknown'>('unknown');
 
-  // Initialize SignalR connection when component mounts
-  useEffect(() => {
-    let isMounted = true;
+  const handleNotificationClick = (notification: any) => {
+    console.log('🔔 [NOTIFICATION] Notification clicked:', notification);
+
+    // Mark notification as read
+    markAsRead();
     
-    // Set a demo token for testing (remove this in production)
-    if (!localStorage.getItem('staff_token')) {
-      localStorage.setItem('staff_token', 'demo-staff-token-for-testing');
-      console.log('🔑 Demo authentication token set for testing');
+    // Navigate based on notification type
+    if (notification.type === 'KEEPER_REGISTRATION') {
+      setCurrentPage('upgrade-request');
+      setNotificationDropdownOpen(false);
+    } else if (notification.type === 'KEEPER_REGISTRATION_REQUEST') {
+      setCurrentPage('upgrade-request');
+      setNotificationDropdownOpen(false);
+    } else if (notification.type === 'CREATESTORAGE') {
+      setCurrentPage('storage-request');
+      setNotificationDropdownOpen(false);
+    } else if (notification.type === 'CREATE_STORAGE_REQUEST') {
+      setCurrentPage('storage-request');
+      setNotificationDropdownOpen(false);
+    } else if (notification.type === 'DELETE_STORAGE_REQUEST') {
+      setCurrentPage('storage-request');
+      setNotificationDropdownOpen(false);
+    } else if (notification.type === 'PAYOUT_REQUEST') {
+      setCurrentPage('payout-request');
+      setNotificationDropdownOpen(false);
     }
-    
-    const initializeSignalR = async () => {
-      // Get staff ID from localStorage or your auth system
-      const staffId = localStorage.getItem('staffId') || 'staff-001';
-      
-      // Avoid multiple connection attempts
-      if (isConnected || !isMounted) {
-        return;
-      }
-      
-      try {
-        const connected = await connect(staffId);
-        if (connected && isMounted) {
-          console.log('✅ Staff SignalR connected successfully');
-        } else if (isMounted) {
-          console.log('📱 Working in offline mode - backend server not available');
-        }
-      } catch (error) {
-        if (isMounted) {
-          console.error('❌ SignalR initialization error:', error);
-        }
-      }
-    };
-
-    // Add a small delay to avoid React StrictMode double execution issues
-    const timer = setTimeout(initializeSignalR, 100);
-
-    // Cleanup function
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-      // Note: We don't disconnect here as it causes issues in StrictMode
-      // The service handles cleanup properly
-    };
-  }, []); // Remove connect/disconnect from deps to avoid re-execution
-
-  // Separate effect for cleanup on unmount
-  useEffect(() => {
-    return () => {
-      // Only disconnect when component is actually unmounting (not in StrictMode)
-      setTimeout(() => {
-        disconnect();
-      }, 100);
-    };
-  }, [disconnect]);
-
-  // Handle keeper registration notification click
-  const handleKeeperRequestClick = (_requestId: string) => {
-    setCurrentPage('request-management');
-    setNotificationOpen(false);
-    // You could also filter the requests page to show this specific request
   };
 
-  // Load users when component mounts or filters change
-  useEffect(() => {
-    if (currentPage === 'list-user' && isConnected) {
-      loadUsers();
+  const toggleNotificationDropdown = () => {
+    setNotificationDropdownOpen(!notificationDropdownOpen);
+  };
+
+  const getNotificationIcon = (type: string) => {
+    switch (type) {
+      case 'KEEPER_REGISTRATION':
+      case 'KEEPER_REGISTRATION_REQUEST':
+        return '👤';
+      case 'CREATESTORAGE':
+      case 'CREATE_STORAGE_REQUEST':
+        return '🏠';
+      case 'DELETE_STORAGE_REQUEST':
+        return '�️';
+      case 'PAYOUT_REQUEST':
+        return '💰';
+      default:
+        return '📢';
     }
-  }, [currentPage, filters, isConnected]);
+  };
+
+  const getNotificationTitle = (type: string) => {
+    switch (type) {
+      case 'KEEPER_REGISTRATION':
+      case 'KEEPER_REGISTRATION_REQUEST':
+        return 'New Keeper Registration';
+      case 'CREATESTORAGE':
+      case 'CREATE_STORAGE_REQUEST':
+        return 'New Storage Creation';
+      case 'DELETE_STORAGE_REQUEST':
+        return 'New Storage Deletion';
+      case 'PAYOUT_REQUEST':
+        return 'Payout Request';
+      default:
+        return 'Notification';
+    }
+  };
+
+
+  // Handle click outside notification dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationDropdownRef.current && !notificationDropdownRef.current.contains(event.target as Node)) {
+        setNotificationDropdownOpen(false);
+      }
+    };
+
+    if (notificationDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [notificationDropdownOpen]);
 
   const loadUsers = async () => {
-    // Check if backend is available and user is authenticated
-    const token = localStorage.getItem('staff_token');
-    if (!token || !isConnected) {
-      console.log('⚠️ Cannot load users: No authentication token or backend unavailable');
-      return;
-    }
-
     try {
       setLoading(true);
-      const response = await userAPI.getAllUsers(filters);
+      
+      const response = await userAPI.getAllUsers(filters)
+      
+      // Update connection status based on response
+      if (response.message?.includes('Backend offline') || response.message?.includes('Mock data')) {
+        setConnectionStatus('offline');
+      } else {
+        setConnectionStatus('connected');
+      }
+      
       
       if (response.data) {
         setUsers(response.data.data);
@@ -155,61 +169,69 @@ export default function Dashboard() {
           hasPrevious: response.data.hasPrevious,
           hasNext: response.data.hasNext
         });
+      } else {
+        console.warn('⚠️ [API DEBUG] No data received from users API');
       }
-    } catch (error) {
-      console.error('Error loading users:', error);
-      // Reset users if there's an authentication error
-      if (error instanceof Error && error.message.includes('401')) {
-        setUsers([]);
-        console.log('🔒 Authentication required for user management');
-      }
+    } catch {
     } finally {
       setLoading(false);
     }
   };
 
+  // Load users when component mounts or filters change
+  useEffect(() => {
+    loadUsers();
+  }, [filters]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load users on initial mount
+  useEffect(() => {
+    loadUsers();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSearch = (term: string) => {
+    
     setSearchTerm(term);
-    setFilters(prev => ({
-      ...prev,
+    const newFilters = {
+      ...filters,
       username: term || undefined,
       pageIndex: 1 // Reset to first page when searching
-    }));
+    };
+  
+    setFilters(newFilters);
   };
 
-  const handleRoleFilter = (role: keyof typeof UserRole | 'ALL') => {
-    setFilters(prev => ({
-      ...prev,
-      role: role === 'ALL' ? undefined : UserRole[role],
-      pageIndex: 1
-    }));
+  const handleRoleFilter = (role: string) => {
+    
+    setFilters((prev: GetUsersParams) => {
+      const newFilters = {
+        ...prev,
+        role: role === 'ALL' ? undefined : UserRole[role as keyof typeof UserRole],
+        pageIndex: 1
+      };
+      return newFilters;
+    });
   };
 
-  const handleStatusFilter = (status: keyof typeof UserStatus | 'ALL') => {
-    setFilters(prev => ({
-      ...prev,
-      status: status === 'ALL' ? undefined : UserStatus[status],
-      pageIndex: 1
-    }));
+  const handleStatusFilter = (status: string) => {
+    setFilters((prev: GetUsersParams) => {
+      const newFilters = {
+        ...prev,
+        status: status === 'ALL' ? undefined : UserStatus[status as keyof typeof UserStatus],
+        pageIndex: 1
+      };
+      return newFilters;
+    });
   };
 
   const handlePageChange = (newPage: number) => {
-    setFilters(prev => ({
-      ...prev,
-      pageIndex: newPage
-    }));
-  };
-
-  const toggleUserStatus = async (_user: User) => {
-    try {
-      setLoading(true);
-      // Just reload user data to refresh the view
-      await loadUsers();
-    } catch (error) {
-      console.error('Error reloading users:', error);
-    } finally {
-      setLoading(false);
-    }
+    
+    setFilters((prev: GetUsersParams) => {
+      const newFilters = {
+        ...prev,
+        pageIndex: newPage
+      };
+      return newFilters;
+    });
   };
 
   const getRoleColor = (role: string) => {
@@ -232,7 +254,6 @@ export default function Dashboard() {
   };
 
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Home },
     { 
       id: 'user', 
       label: 'User', 
@@ -247,21 +268,9 @@ export default function Dashboard() {
       label: 'Storages', 
       icon: Package,
       submenu: [
-        { id: 'list-storage', label: 'List storage' },
         { id: 'storage-request', label: 'Storage request' }
       ]
     },
-    { 
-      id: 'request', 
-      label: 'Requests', 
-      icon: Bell,
-      submenu: [
-        { id: 'request-management', label: 'All Requests' },
-        { id: 'keeper-requests', label: 'Keeper Registrations' }
-      ]
-    },
-    { id: 'order', label: 'Order', icon: FileText },
-    { id: 'rating', label: 'Rating', icon: Activity },
     { 
       id: 'payout', 
       label: 'Payout', 
@@ -272,7 +281,7 @@ export default function Dashboard() {
     }
   ];
 
-  const [expandedMenus, setExpandedMenus] = useState(['user', 'storage', 'request', 'payout']);
+  const [expandedMenus, setExpandedMenus] = useState(['user', 'storage', 'payout']);
 
   const toggleMenu = (menuId: string) => {
     setExpandedMenus(prev => 
@@ -293,60 +302,17 @@ export default function Dashboard() {
   const viewUserDetails = async (user: User) => {
     try {
       setLoading(true);
+      
       const response = await userAPI.getUserDetail(user.id);
       
       if (response.data) {
         setSelectedUser(response.data);
         setCurrentPage('user-details');
+      } else {
       }
     } catch (error) {
-      console.error('Error fetching user details:', error);
-      // You might want to show a toast notification here
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleUserUpdated = (updatedUser: User) => {
-    // Update the selected user state
-    setSelectedUser(updatedUser);
-    
-    // Update the user in the users list as well
-    setUsers(prevUsers => 
-      prevUsers.map(u => u.id === updatedUser.id ? updatedUser : u)
-    );
-  };
-
-  const handleLogout = () => {
-    // Show confirmation dialog
-    if (window.confirm('Bạn có chắc chắn muốn đăng xuất không?')) {
-      try {
-        // Disconnect SignalR connection
-        disconnect();
-        
-        // Clear authentication token
-        localStorage.removeItem('staff_token');
-        localStorage.removeItem('staffId');
-
-        // Clear user data
-        setUsers([]);
-        setSelectedUser(null);
-        
-        // Reset to dashboard page
-        setCurrentPage('dashboard');
-        
-        console.log('🚪 User logged out successfully');
-        
-        // In a real app, you would redirect to login page
-        // For now, just show an alert
-        alert('Đăng xuất thành công! Trong ứng dụng thực tế, bạn sẽ được chuyển hướng đến trang đăng nhập.');
-        
-        // You could redirect to login page like this:
-        // window.location.href = '/login';
-      } catch (error) {
-        console.error('Error during logout:', error);
-        alert('Có lỗi xảy ra khi đăng xuất. Vui lòng thử lại.');
-      }
     }
   };
 
@@ -433,7 +399,7 @@ export default function Dashboard() {
           {/* Logout */}
           <div className="p-4 border-t border-gray-700">
             <button 
-              onClick={handleLogout}
+              onClick={onLogout}
               className={`w-full flex items-center ${sidebarOpen ? 'space-x-3' : 'justify-center'} ${sidebarOpen ? 'px-4' : 'px-3'} py-3 text-gray-300 hover:bg-red-600/20 hover:text-red-400 rounded-xl transition-all duration-200`}
             >
               <LogOut className="w-5 h-5" />
@@ -450,16 +416,10 @@ export default function Dashboard() {
           <div className="px-6 py-4 flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <h1 className="text-2xl font-bold text-white">
-                {currentPage === 'dashboard' && 'Dashboard Overview'}
                 {currentPage === 'list-user' && 'User Management'}
                 {currentPage === 'user-details' && 'User Details'}
                 {currentPage === 'upgrade-request' && 'Upgrade Requests'}
-                {currentPage === 'list-storage' && 'Storage Management'}
                 {currentPage === 'storage-request' && 'Storage Requests'}
-                {currentPage === 'request-management' && 'Request Management'}
-                {currentPage === 'keeper-requests' && 'Keeper Registration Requests'}
-                {currentPage === 'order' && 'Order Management'}
-                {currentPage === 'rating' && 'Rating Management'}
                 {currentPage === 'payout-request' && 'Payout Requests'}
               </h1>
             </div>
@@ -475,62 +435,127 @@ export default function Dashboard() {
                 />
               </div>
               
-              {/* Notifications */}
-              <NotificationDropdown
-                keeperRegistrations={keeperRegistrations}
-                generalNotifications={generalNotifications}
-                onMarkAsRead={markAsRead}
-                onClearAll={(type) => {
-                  if (type === 'keeper') {
-                    clearKeeperRegistrations();
-                  } else {
-                    clearGeneralNotifications();
-                  }
-                }}
-                onKeeperRequestClick={handleKeeperRequestClick}
-                isOpen={notificationOpen}
-                onToggle={() => setNotificationOpen(!notificationOpen)}
-              />
-              
-              {/* SignalR Connection Status */}
-              <div 
-                className="flex items-center space-x-2 px-3 py-2 bg-white/20 backdrop-blur-sm rounded-xl cursor-pointer"
-                title={
-                  isConnecting 
-                    ? 'Đang kết nối đến dịch vụ thông báo...' 
-                    : isConnected 
-                      ? 'Thông báo thời gian thực đang hoạt động' 
-                      : error 
-                        ? `Lỗi kết nối: ${error}` 
-                        : 'Đang hoạt động ở chế độ offline'
-                }
-              >
-                <div className={`w-2 h-2 rounded-full ${
-                  isConnecting 
-                    ? 'bg-yellow-400 animate-pulse' 
-                    : isConnected 
-                      ? 'bg-green-400 animate-pulse' 
-                      : 'bg-red-400'
-                }`}></div>
-                <span className="text-white/80 text-xs hidden md:block">
-                  {isConnecting ? 'Đang kết nối...' : isConnected ? 'Trực tuyến' : 'Ngoại tuyến'}
-                </span>
+              {/* Notifications Dropdown */}
+              <div className="relative" ref={notificationDropdownRef}>
+                <button 
+                  onClick={toggleNotificationDropdown}
+                  className="relative p-2 bg-white/20 backdrop-blur-sm rounded-xl hover:bg-white/30 transition-all"
+                  title={`${unreadCount} unread notifications`}
+                >
+                  <Bell className="w-5 h-5 text-white" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[1.25rem] h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center px-1 animate-pulse">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Notification Dropdown */}
+                {notificationDropdownOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-2xl border border-gray-200 z-50">
+                    {/* Dropdown Header */}
+                    <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                      <h3 className="font-semibold text-gray-800">Notifications</h3>
+                      <div className="flex items-center space-x-2">
+                        {unreadCount > 0 && (
+                          <span className="px-2 py-1 bg-red-500 text-white text-xs rounded-full">
+                            {unreadCount}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => setNotificationDropdownOpen(false)}
+                          className="text-gray-400 hover:text-gray-600 p-1"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Notification List */}
+                    <div className="max-h-80 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="px-4 py-8 text-center text-gray-500">
+                          <Bell className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                          <p className="text-sm">No new notifications</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-gray-100">
+                          {notifications.slice(0, 10).map((notification, index) => (
+                            <button
+                              key={index}
+                              onClick={() => handleNotificationClick(notification)}
+                              className="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                            >
+                              <div className="flex items-start space-x-3">
+                                <div className="text-lg flex-shrink-0 mt-0.5">
+                                  {getNotificationIcon(notification.type)}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <h4 className="font-medium text-gray-900 text-sm truncate">
+                                      {getNotificationTitle(notification.type)}
+                                    </h4>
+                                    <span className="text-xs text-gray-500 flex-shrink-0 ml-2">
+                                      {new Date(notification.timestamp).toLocaleTimeString('vi-VN', {
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-gray-600 line-clamp-2">
+                                    {notification.message}
+                                  </p>
+                                  {notification.data?.Username && (
+                                    <p className="text-xs text-blue-600 mt-1">
+                                      User: {notification.data.Username}
+                                    </p>
+                                  )}
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0 mt-1" />
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dropdown Footer */}
+                    {notifications.length > 0 && (
+                      <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+                        <button
+                          onClick={() => {
+                            clearNotifications();
+                            setNotificationDropdownOpen(false);
+                          }}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Clear all
+                        </button>
+                        <button
+                          onClick={() => {
+                            markAsRead();
+                            setNotificationDropdownOpen(false);
+                          }}
+                          className="text-sm text-blue-600 hover:text-blue-800"
+                        >
+                          Mark all read
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+            
               
               {/* User Profile */}
               <div className="flex items-center space-x-3 px-4 py-2 bg-white/20 backdrop-blur-sm rounded-xl">
                 <div className="w-10 h-10 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center">
                   <span className="text-white font-bold">
-                    {localStorage.getItem('staff_token') ? 'S' : 'G'}
+                    {user?.fullName?.charAt(0)?.toUpperCase() || user?.username?.charAt(0)?.toUpperCase() || 'U'}
                   </span>
                 </div>
                 <div className="hidden md:block">
-                  <p className="text-white font-medium">
-                    {localStorage.getItem('staff_token') ? 'Staff User' : 'Guest User'}
-                  </p>
-                  <p className="text-white/70 text-sm">
-                    {localStorage.getItem('staff_token') ? 'staff@packpals.com' : 'Chưa đăng nhập'}
-                  </p>
+                  <p className="text-white font-medium">{user?.fullName || user?.username || 'Staff User'}</p>
                 </div>
               </div>
             </div>
@@ -539,166 +564,31 @@ export default function Dashboard() {
 
         {/* Page Content */}
         <main className="flex-1 p-6 overflow-y-auto">
-          {/* Dashboard Page */}
-          {currentPage === 'dashboard' && (
-            <div className="space-y-6">
-              {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100 hover:shadow-2xl transition-shadow">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center">
-                      <Users className="w-6 h-6 text-white" />
-                    </div>
-                    <TrendingUp className="w-5 h-5 text-green-500" />
-                  </div>
-                  <h3 className="text-gray-500 text-sm mb-1">Total Users</h3>
-                  <p className="text-3xl font-bold text-gray-800">1,234</p>
-                  <p className="text-sm text-green-500 mt-2">+12% from last month</p>
-                </div>
-
-                <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100 hover:shadow-2xl transition-shadow">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center">
-                      <DollarSign className="w-6 h-6 text-white" />
-                    </div>
-                    <TrendingUp className="w-5 h-5 text-green-500" />
-                  </div>
-                  <h3 className="text-gray-500 text-sm mb-1">Total Revenue</h3>
-                  <p className="text-3xl font-bold text-gray-800">$45,678</p>
-                  <p className="text-sm text-green-500 mt-2">+8% from last month</p>
-                </div>
-
-                <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100 hover:shadow-2xl transition-shadow">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl flex items-center justify-center">
-                      <Package className="w-6 h-6 text-white" />
-                    </div>
-                    <Activity className="w-5 h-5 text-purple-500" />
-                  </div>
-                  <h3 className="text-gray-500 text-sm mb-1">Active Storage</h3>
-                  <p className="text-3xl font-bold text-gray-800">892</p>
-                  <p className="text-sm text-purple-500 mt-2">23 pending</p>
-                </div>
-
-                <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100 hover:shadow-2xl transition-shadow">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center">
-                      <FileText className="w-6 h-6 text-white" />
-                    </div>
-                    <Activity className="w-5 h-5 text-orange-500" />
-                  </div>
-                  <h3 className="text-gray-500 text-sm mb-1">Pending Requests</h3>
-                  <p className="text-3xl font-bold text-gray-800">47</p>
-                  <p className="text-sm text-orange-500 mt-2">Requires attention</p>
-                </div>
+          {/* Connection Status Banner */}
+          {connectionStatus === 'offline' && (
+            <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center space-x-3">
+              <div className="w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center">
+                <span className="text-yellow-800 text-xs">!</span>
               </div>
-
-              {/* Chart Section */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Revenue Overview</h3>
-                  <div className="h-64 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl flex items-center justify-center">
-                    <BarChart3 className="w-16 h-16 text-blue-500/30" />
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4">User Growth</h3>
-                  <div className="h-64 bg-gradient-to-br from-green-50 to-blue-50 rounded-xl flex items-center justify-center">
-                    <TrendingUp className="w-16 h-16 text-green-500/30" />
-                  </div>
-                </div>
+              <div className="flex-1">
+                <h4 className="text-yellow-800 font-medium">Development Mode</h4>
+                <p className="text-yellow-700 text-sm">
+                  Backend API không khả dụng. Đang sử dụng mock data để phát triển.
+                </p>
               </div>
+              <button 
+                onClick={loadUsers}
+                className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded-lg text-sm hover:bg-yellow-300 transition-colors"
+              >
+                Retry
+              </button>
             </div>
           )}
-
+          
           {/* User List Page */}
           {currentPage === 'list-user' && (
             <div className="space-y-6">
-              {/* Offline Mode Notice */}
-              {!isConnected && (
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-2 h-2 bg-amber-400 rounded-full"></div>
-                    <div>
-                      <h3 className="text-amber-800 font-medium">Đang hoạt động ở chế độ Offline</h3>
-                      <p className="text-amber-600 text-sm">Quản lý người dùng yêu cầu kết nối backend. Vui lòng khởi động PackPals Backend (.NET) tại cổng 5000 để truy cập dữ liệu người dùng.</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Authentication Notice */}
-              {isConnected && !localStorage.getItem('staff_token') && (
-                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                    <div>
-                      <h3 className="text-blue-800 font-medium">Yêu cầu đăng nhập</h3>
-                      <p className="text-blue-600 text-sm">Vui lòng đăng nhập để truy cập các tính năng quản lý người dùng. Click vào nút "Demo Login" để đăng nhập với tài khoản demo.</p>
-                      <div className="mt-3 flex gap-3">
-                        <button 
-                          onClick={async () => {
-                            try {
-                              // Call demo token endpoint
-                              const response = await fetch('http://localhost:5000/api/user/demo-token', {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                },
-                              });
-                              
-                              if (response.ok) {
-                                const data = await response.json();
-                                const token = data.data?.accessToken;
-                                
-                                if (token) {
-                                  localStorage.setItem('staff_token', token);
-                                  localStorage.setItem('staffId', 'staff-001');
-                                  alert('✅ Demo login thành công! Token đã được lưu.');
-                                  window.location.reload();
-                                } else {
-                                  alert('❌ Token không hợp lệ trong response');
-                                }
-                              } else {
-                                alert('❌ Failed to get demo token: ' + response.status);
-                              }
-                            } catch (error) {
-                              console.error('❌ Demo login failed:', error);
-                              alert('❌ Demo login failed: ' + error);
-                            }
-                          }}
-                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                        >
-                          Demo Login
-                        </button>
-                        <button 
-                          onClick={async () => {
-                            try {
-                              const response = await userAPI.testConnection();
-                              console.log('✅ Test connection result:', response);
-                              alert('✅ Kết nối backend thành công!\n' + 
-                                    `Message: ${response.message}\n` +
-                                    `Status: ${response.statusCode}\n` +
-                                    `Found ${response.data?.totalCount || 0} test users`);
-                            } catch (error) {
-                              console.error('❌ Test connection failed:', error);
-                              alert('❌ Không thể kết nối backend:\n' + 
-                                    (error instanceof Error ? error.message : 'Unknown error'));
-                            }
-                          }}
-                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                        >
-                          Test Connection
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* Search and Filter Bar */}
-              {isConnected && localStorage.getItem('staff_token') && (
               <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                   <div className="flex flex-col sm:flex-row gap-4 flex-1">
@@ -716,7 +606,7 @@ export default function Dashboard() {
                     
                     {/* Role Filter */}
                     <select
-                      onChange={(e) => handleRoleFilter(e.target.value as keyof typeof UserRole | 'ALL')}
+                      onChange={(e) => handleRoleFilter(e.target.value)}
                       className="px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
                       <option value="ALL">All Roles</option>
@@ -728,7 +618,7 @@ export default function Dashboard() {
                     
                     {/* Status Filter */}
                     <select
-                      onChange={(e) => handleStatusFilter(e.target.value as keyof typeof UserStatus | 'ALL')}
+                      onChange={(e) => handleStatusFilter(e.target.value)}
                       className="px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
                       <option value="ALL">All Status</option>
@@ -750,10 +640,8 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              )}
 
               {/* Table */}
-              {isConnected && localStorage.getItem('staff_token') && (
               <div className="bg-white rounded-2xl shadow-xl border border-gray-100">
                 {/* Table Header */}
                 <div className="p-6 border-b border-gray-100">
@@ -805,14 +693,14 @@ export default function Dashboard() {
                                 )}
                                 <div>
                                   <div className="font-medium text-gray-900">{user.username}</div>
-                                  <div className="text-sm text-gray-500">ID: {user.id.substring(0, 8)}...</div>
+                                  <div className="text-sm text-gray-500 font-mono">ID: {user.id}</div>
                                 </div>
                               </div>
                             </td>
                             <td className="px-6 py-4 text-gray-600">{user.email}</td>
                             <td className="px-6 py-4">
-                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleColor(user.role)}`}>
-                                {user.role}
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleColor(user.activeRole)}`}>
+                                {user.activeRole}
                               </span>
                             </td>
                             <td className="px-6 py-4">
@@ -876,7 +764,6 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-              )}
             </div>
           )}
 
@@ -884,31 +771,31 @@ export default function Dashboard() {
           {currentPage === 'user-details' && selectedUser && (
             <UserDetails 
               user={selectedUser}
-              loading={loading}
               onBack={() => setCurrentPage('list-user')}
-              onToggleStatus={toggleUserStatus}
-              onUserUpdated={handleUserUpdated}
             />
           )}
 
-          {/* Request Management Pages */}
-          {(currentPage === 'request-management' || currentPage === 'keeper-requests') && (
+          {/* Upgrade Request Page - Chỉ cho KEEPER_REGISTRATION */}
+          {currentPage === 'upgrade-request' && (
             <RequestManagement 
-              onBackToMain={() => setCurrentPage('dashboard')}
+              user={user}
+              initialTypeFilter={RequestType.KEEPER_REGISTRATION}
+              initialStatusFilter={RequestStatus.PENDING}
             />
           )}
 
-          {/* Other Pages Placeholder */}
-          {['upgrade-request', 'list-storage', 'storage-request', 'order', 'rating', 'payout-request'].includes(currentPage) && (
-            <div className="flex items-center justify-center h-96">
-              <div className="text-center">
-                <div className="w-24 h-24 bg-gradient-to-br from-gray-200 to-gray-300 rounded-3xl flex items-center justify-center mx-auto mb-4">
-                  <FileText className="w-12 h-12 text-gray-500" />
-                </div>
-                <h3 className="text-2xl font-semibold text-gray-700 mb-2">Coming Soon</h3>
-                <p className="text-gray-500">This page is under development</p>
-              </div>
-            </div>
+          {/* Storage Request Page - Chỉ cho CREATESTORAGE requests */}
+          {currentPage === 'storage-request' && (
+            <RequestManagement 
+              user={user}
+              initialTypeFilter="STORAGE"
+              initialStatusFilter={RequestStatus.PENDING}
+            />
+          )}
+
+          {/* Payout Request Page */}
+          {currentPage === 'payout-request' && (
+            <PayoutManagement />
           )}
         </main>
       </div>

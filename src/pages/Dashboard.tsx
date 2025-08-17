@@ -8,12 +8,14 @@ import {
   Menu,
   Package,
   Search,
+  TrendingUp,
   UserCheck,
   Users,
   UserX,
   X
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import OrderManagement from '../components/OrderManagement';
 import PayoutManagement from '../components/PayoutManagement';
 import RequestManagement from '../components/RequestManagement';
 import UserDetails from '../components/UserDetails';
@@ -272,6 +274,14 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
       ]
     },
     { 
+      id: 'order', 
+      label: 'Orders', 
+      icon: TrendingUp,
+      submenu: [
+        { id: 'order-management', label: 'Order management' }
+      ]
+    },
+    { 
       id: 'payout', 
       label: 'Payout', 
       icon: DollarSign,
@@ -281,7 +291,7 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
     }
   ];
 
-  const [expandedMenus, setExpandedMenus] = useState(['user', 'storage', 'payout']);
+  const [expandedMenus, setExpandedMenus] = useState(['user', 'storage', 'order', 'payout']);
 
   const toggleMenu = (menuId: string) => {
     setExpandedMenus(prev => 
@@ -420,21 +430,12 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
                 {currentPage === 'user-details' && 'User Details'}
                 {currentPage === 'upgrade-request' && 'Upgrade Requests'}
                 {currentPage === 'storage-request' && 'Storage Requests'}
+                {currentPage === 'order-management' && 'Order Management'}
                 {currentPage === 'payout-request' && 'Payout Requests'}
               </h1>
             </div>
             
             <div className="flex items-center space-x-4">
-              {/* Search */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/60" />
-                <input
-                  type="text"
-                  placeholder="Search..."
-                  className="pl-10 pr-4 py-2 bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl text-white placeholder-white/60 focus:outline-none focus:bg-white/30 transition-all"
-                />
-              </div>
-              
               {/* Notifications Dropdown */}
               <div className="relative" ref={notificationDropdownRef}>
                 <button 
@@ -791,6 +792,11 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
               initialTypeFilter="STORAGE"
               initialStatusFilter={RequestStatus.PENDING}
             />
+          )}
+
+          {/* Order Management Page */}
+          {currentPage === 'order-management' && (
+            <OrderManagement />
           )}
 
           {/* Payout Request Page */}

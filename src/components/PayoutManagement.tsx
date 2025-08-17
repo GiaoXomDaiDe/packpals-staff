@@ -1,5 +1,5 @@
 import { AlertCircle, Check, Clock, CreditCard, Eye, Loader2, RefreshCw, User, X } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useToast } from '../context/ToastProvider';
 import {
   getPayoutStatusColor,
@@ -10,7 +10,9 @@ import {
   useUploadProof
 } from '../hooks/useStaffPayout';
 import type { PayoutRequest } from '../lib/api/payout';
-import { formatBankAccount, parseBankAccount } from '../utils/bankUtils';
+import { formatBankAccount, formatCurrency, parseBankAccount } from '../utils/bankUtils';
+import Pagination from './shared/Pagination';
+import SummaryStats from './shared/SummaryStats';
 
 const PayoutManagement: React.FC = () => {
   const [selectedPayout, setSelectedPayout] = useState<PayoutRequest | null>(null);
@@ -18,21 +20,49 @@ const PayoutManagement: React.FC = () => {
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [transactionCode, setTransactionCode] = useState('');
   const [description, setDescription] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'NOTPAID' | 'BUSY' | 'PAID'>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(10);
+  const [processingPayoutId, setProcessingPayoutId] = useState<string | null>(null);
 
   // Queries and mutations
-  const { data: payoutRequests, isLoading, error, refetch } = useStaffPayoutRequests();
+  const { data: payoutResponse, isLoading, error, refetch } = useStaffPayoutRequests(currentPage, pageSize);
+  const payoutRequests = payoutResponse?.data || [];
+  const totalCount = payoutResponse?.totalCount || 0;
+  const totalPages = Math.ceil(totalCount / pageSize);
   const startProcessingMutation = useStartProcessingPayout();
   const uploadProofMutation = useUploadProof();
   const completePayoutMutation = useCompletePayout();
   const { success, error: showError } = useToast();
 
-  // Filter payouts based on status
+  // Reset pagination when filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter]);
+
+  // Filter and sort payouts based on status with smart positioning for recently processed items
   const filteredPayouts = payoutRequests?.filter(payout => {
     if (statusFilter === 'ALL') return true;
     return payout.status === statusFilter;
+  }).sort((a, b) => {
+    // If one of the items was recently processed, keep it in a stable position
+    if (processingPayoutId) {
+      if (a.id === processingPayoutId) return -1; // Keep processed item at current position
+      if (b.id === processingPayoutId) return 1;
+    }
+    
+    // Priority sorting: BUSY (processing) > NOTPAID > PAID
+    const statusPriority = { 'BUSY': 0, 'NOTPAID': 1, 'PAID': 2 };
+    const aPriority = statusPriority[a.status] ?? 3;
+    const bPriority = statusPriority[b.status] ?? 3;
+    
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    
+    // If same status, sort by creation date (newest first)
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   }) || [];
 
   const payoutStats = {
@@ -46,6 +76,9 @@ const PayoutManagement: React.FC = () => {
       return;
     }
 
+    // Track which payout is being processed to maintain its position
+    setProcessingPayoutId(payout.id);
+
     try {
       const staffId = localStorage.getItem('staff_id') || '';
       await startProcessingMutation.mutateAsync({
@@ -53,9 +86,13 @@ const PayoutManagement: React.FC = () => {
         staffId: staffId,
       });
       
+      // Keep the processed item visible by maintaining sort order
       // React Query will handle the refresh via onSuccess
     } catch (error) {
       console.error('Error starting processing:', error);
+    } finally {
+      // Clear processing state after a short delay to maintain smooth UX
+      setTimeout(() => setProcessingPayoutId(null), 1000);
     }
   };
 
@@ -82,21 +119,20 @@ const PayoutManagement: React.FC = () => {
   };
 
   const handleCompletePayout = async () => {
-    if (!transactionCode.trim() || !selectedPayout) {
-      showError('Lỗi', 'Vui lòng nhập mã giao dịch');
+    if (!selectedPayout) {
+      showError('Lỗi', 'Không tìm thấy payout request');
       return;
     }
 
     try {
       await completePayoutMutation.mutateAsync({
         payoutId: selectedPayout.id,
-        transactionCode: transactionCode.trim(),
+        transactionCode: `AUTO_${Date.now()}`, // Auto-generated transaction code
         description: description.trim() || 'Payout completed',
       });
       
       // Close modal immediately - React Query will handle the refresh via onSuccess
       setShowCompleteModal(false);
-      setTransactionCode('');
       setDescription('');
       setSelectedPayout(null);
       
@@ -167,43 +203,41 @@ const PayoutManagement: React.FC = () => {
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
-          <div className="flex items-center gap-3">
-            <Clock className="h-8 w-8 text-yellow-600" />
-            <div>
-              <p className="text-yellow-800 font-semibold text-lg">{payoutStats.notPaid}</p>
-              <p className="text-yellow-600 text-sm">Not Paid</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
-          <div className="flex items-center gap-3">
-            <CreditCard className="h-8 w-8 text-blue-600" />
-            <div>
-              <p className="text-blue-800 font-semibold text-lg">{payoutStats.busy}</p>
-              <p className="text-blue-600 text-sm">Processing</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-green-50 border border-green-200 rounded-xl p-6">
-          <div className="flex items-center gap-3">
-            <Check className="h-8 w-8 text-green-600" />
-            <div>
-              <p className="text-green-800 font-semibold text-lg">{payoutStats.paid}</p>
-              <p className="text-green-600 text-sm">Completed</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <SummaryStats 
+        stats={[
+          {
+            label: 'Not Paid',
+            value: payoutStats.notPaid,
+            description: 'Pending requests',
+            icon: Clock,
+            bgColor: 'bg-white border border-gray-100',
+            textColor: 'text-gray-900',
+            iconColor: 'text-yellow-600'
+          },
+          {
+            label: 'Processing',
+            value: payoutStats.busy,
+            description: 'In progress',
+            icon: CreditCard,
+            bgColor: 'bg-white border border-gray-100',
+            textColor: 'text-gray-900',
+            iconColor: 'text-blue-600'
+          },
+          {
+            label: 'Completed',
+            value: payoutStats.paid,
+            description: 'Successfully paid',
+            icon: Check,
+            bgColor: 'bg-white border border-gray-100',
+            textColor: 'text-gray-900',
+            iconColor: 'text-green-600'
+          }
+        ]} 
+        columns={3} 
+      />
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-100 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Filters</h3>
-        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -233,8 +267,9 @@ const PayoutManagement: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
@@ -256,7 +291,12 @@ const PayoutManagement: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredPayouts.map((payout) => (
-                  <tr key={payout.id} className="hover:bg-gray-50 transition-colors">
+                  <tr 
+                    key={payout.id} 
+                    className={`hover:bg-gray-50 transition-colors ${
+                      processingPayoutId === payout.id ? 'bg-blue-50 border-l-4 border-blue-500' : ''
+                    }`}
+                  >
                     <td className="px-6 py-4">
                       <div className="flex items-center space-x-3">
                         <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
@@ -325,7 +365,7 @@ const PayoutManagement: React.FC = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-lg font-semibold text-gray-900">
-                        {payout.amount.toLocaleString()} VND
+                        {formatCurrency(payout.amount)}
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -389,6 +429,18 @@ const PayoutManagement: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
+
+            {/* Pagination */}
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalCount={totalCount}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              loading={false}
+              itemName="payouts"
+            />
           </div>
         )}
       </div>
@@ -403,7 +455,7 @@ const PayoutManagement: React.FC = () => {
                 <div>
                   <h3 className="text-lg font-semibold text-white">Upload Proof</h3>
                   <p className="text-orange-100 text-sm">
-                    {selectedPayout.amount.toLocaleString()} VND
+                    {formatCurrency(selectedPayout.amount)}
                   </p>
                 </div>
                 <button
@@ -474,13 +526,12 @@ const PayoutManagement: React.FC = () => {
                 <div>
                   <h3 className="text-lg font-semibold text-white">Complete Payout</h3>
                   <p className="text-green-100 text-sm">
-                    {selectedPayout.amount.toLocaleString()} VND
+                    {formatCurrency(selectedPayout.amount)}
                   </p>
                 </div>
                 <button
                   onClick={() => {
                     setShowCompleteModal(false);
-                    setTransactionCode('');
                     setDescription('');
                     setSelectedPayout(null);
                   }}
@@ -493,19 +544,6 @@ const PayoutManagement: React.FC = () => {
 
             {/* Modal Content */}
             <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Transaction Code *
-                </label>
-                <input
-                  type="text"
-                  placeholder="Enter bank transaction code"
-                  value={transactionCode}
-                  onChange={(e) => setTransactionCode(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                />
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Description (Optional)
@@ -522,7 +560,7 @@ const PayoutManagement: React.FC = () => {
               <div className="flex space-x-3 pt-2">
                 <button
                   onClick={handleCompletePayout}
-                  disabled={!transactionCode.trim() || completePayoutMutation.isPending}
+                  disabled={completePayoutMutation.isPending}
                   className="flex-1 flex items-center justify-center space-x-2 px-4 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 disabled:opacity-50 transition-all duration-200 font-medium"
                 >
                   {completePayoutMutation.isPending ? (
@@ -537,7 +575,6 @@ const PayoutManagement: React.FC = () => {
                 <button
                   onClick={() => {
                     setShowCompleteModal(false);
-                    setTransactionCode('');
                     setDescription('');
                     setSelectedPayout(null);
                   }}
@@ -588,7 +625,7 @@ const PayoutManagement: React.FC = () => {
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500">Amount</span>
-                  <span className="font-semibold text-lg text-gray-900">{selectedPayout.amount.toLocaleString()} VND</span>
+                  <span className="font-semibold text-lg text-gray-900">{formatCurrency(selectedPayout.amount)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500">Created</span>
@@ -661,11 +698,11 @@ const PayoutManagement: React.FC = () => {
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-gray-600 text-sm">Total Amount</span>
-                      <span className="font-medium text-gray-900">{selectedPayout.order.totalAmount.toLocaleString()} VND</span>
+                      <span className="font-medium text-gray-900">{formatCurrency(selectedPayout.order.totalAmount)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-gray-600 text-sm">Service Fee</span>
-                      <span className="font-medium text-gray-900">{selectedPayout.order.serviceFee.toLocaleString()} VND</span>
+                      <span className="font-medium text-gray-900">{formatCurrency(selectedPayout.order.serviceFee)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-gray-600 text-sm">Package</span>

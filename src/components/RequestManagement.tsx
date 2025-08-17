@@ -15,6 +15,7 @@ import type { StaffUser } from '../lib/api/auth';
 import { requestAPI, RequestStatus, RequestType, type DeleteStorageData, type KeeperRegistrationData, type Request } from '../lib/api/request';
 import { userAPI } from '../lib/api/user';
 import { toast } from '../utils/toast';
+import Pagination from './shared/Pagination';
 
 // Lazy load PDF Viewer (client-side only)
 const PdfViewer = lazy(() => import('./PdfViewer'));
@@ -37,6 +38,16 @@ export const RequestManagement: React.FC<RequestManagementProps> = ({
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [showModal, setShowModal] = useState(false);
   
+  // Pagination state
+  const [pagination, setPagination] = useState({
+    pageIndex: 1,
+    pageSize: 10,
+    totalPages: 1,
+    totalCount: 0,
+    hasPrevious: false,
+    hasNext: false
+  });
+  
   // PDF viewer states - simplified for lazy component
   const [showPdfViewer, setShowPdfViewer] = useState(false);
   const [currentPdfUrl, setCurrentPdfUrl] = useState<string>('');
@@ -58,8 +69,8 @@ export const RequestManagement: React.FC<RequestManagementProps> = ({
       console.log('🔄 [REQUEST MGMT] Loading requests...');
       
       const query = {
-        pageIndex: 1,
-        pageSize: 50,
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
         ...(statusFilter !== 'ALL' && { status: statusFilter as RequestStatus }),
         ...(typeFilter !== 'ALL' && typeFilter !== 'STORAGE' && { type: typeFilter as RequestType })
       };
@@ -69,6 +80,14 @@ export const RequestManagement: React.FC<RequestManagementProps> = ({
       
       if (response.data) {
         setRequests(response.data.data);
+        setPagination({
+          pageIndex: response.data.pageIndex,
+          pageSize: response.data.pageSize,
+          totalPages: response.data.totalPages,
+          totalCount: response.data.totalCount,
+          hasPrevious: response.data.hasPrevious,
+          hasNext: response.data.hasNext
+        });
         console.log('✅ [REQUEST MGMT] Loaded requests:', response.data.data.length);
       }
     } catch (error) {
@@ -81,7 +100,16 @@ export const RequestManagement: React.FC<RequestManagementProps> = ({
   // Load requests on component mount
   useEffect(() => {
     loadRequests();
+  }, [statusFilter, typeFilter, pagination.pageIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setPagination(prev => ({ ...prev, pageIndex: 1 }));
   }, [statusFilter, typeFilter]);
+
+  const handlePageChange = (newPage: number) => {
+    setPagination(prev => ({ ...prev, pageIndex: newPage }));
+  };
 
   // Handle request approval/rejection
   const handleRequestAction = async (requestId: string, approve: boolean) => {
@@ -674,6 +702,19 @@ export const RequestManagement: React.FC<RequestManagementProps> = ({
                 <h3 className="text-lg font-medium text-gray-900 mb-2">No requests found</h3>
                 <p className="text-gray-500">No requests match your current filters.</p>
               </div>
+            )}
+
+            {/* Pagination */}
+            {!loading && requests.length > 0 && (
+              <Pagination
+                currentPage={pagination.pageIndex}
+                totalPages={pagination.totalPages}
+                totalCount={pagination.totalCount}
+                pageSize={pagination.pageSize}
+                onPageChange={handlePageChange}
+                loading={loading}
+                itemName="requests"
+              />
             )}
           </div>
         )}

@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-    CompletePayoutRequest,
-    PayoutRequest,
-    ProcessPayoutRequest,
-    UploadProofRequest
+  CompletePayoutRequest,
+  PayoutRequest,
+  ProcessPayoutRequest,
+  UploadProofRequest
 } from '../lib/api/payout';
 import { staffPayoutAPI } from '../lib/api/payout';
 import { toast } from '../utils/toast';
@@ -17,10 +17,10 @@ export const STAFF_PAYOUT_QUERY_KEYS = {
 /**
  * Hook to get all payout requests for staff
  */
-export function useStaffPayoutRequests() {
+export function useStaffPayoutRequests(pageIndex: number = 1, pageSize: number = 10) {
   return useQuery({
-    queryKey: STAFF_PAYOUT_QUERY_KEYS.requests(),
-    queryFn: () => staffPayoutAPI.getAllPayoutRequests(),
+    queryKey: [...STAFF_PAYOUT_QUERY_KEYS.requests(), pageIndex, pageSize],
+    queryFn: () => staffPayoutAPI.getAllPayoutRequests(pageIndex, pageSize),
     refetchInterval: 30000, // Refetch every 30 seconds for real-time updates
     staleTime: 1000 * 60 * 1, // 1 minute
   });

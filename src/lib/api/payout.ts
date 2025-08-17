@@ -75,9 +75,9 @@ class StaffPayoutAPI {
   /**
    * Get all payout requests for staff processing
    */
-  async getAllPayoutRequests(): Promise<PayoutRequest[]> {
+  async getAllPayoutRequests(pageIndex: number = 1, pageSize: number = 10): Promise<{ data: PayoutRequest[], pageIndex: number, totalCount: number }> {
     try {
-      const response = await fetch(`${API_BASE_URL}/payout/requests`, {
+      const response = await fetch(`${API_BASE_URL}/payout/requests?pageIndex=${pageIndex}&pageSize=${pageSize}`, {
         method: 'GET',
         headers: await this.getAuthHeaders(),
       });
@@ -90,7 +90,7 @@ class StaffPayoutAPI {
       
       // Check if response is successful based on statusCode
       if (result.statusCode === 200 && result.data) {
-        return result.data.data; // Return the actual array from data.data
+        return result.data; // Return the complete pagination object
       } else {
         throw new Error(result.message || result.code || 'Failed to fetch payout requests');
       }
